@@ -1,0 +1,54 @@
+name: 🚀 Deploy Laravel to AWS EC2
+
+on:
+  push:
+    branches:
+      - main  # Trigger deploy on push to main branch
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+            cd /var/www/crm
+            git pull origin main
+            composer install --no-dev --optimize-autoloader
+            php artisan migrate --force
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            exit
+          EOF
+
+  upload-assets:
+    name: Upload assets to S3
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync assets to S3
+        uses: jakejarvis/s3-sync-action@v0.5.1
+        with:
+          args: --delete
+        env:
+          AWS_S3_BUCKET: ${{ secrets.AWS_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SOURCE_DIR: public
